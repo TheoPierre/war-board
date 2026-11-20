@@ -63,6 +63,30 @@ describe("carte de 1936", () => {
     expect(ownerOf("Vienne")).toBe("AUT");
     expect(ownerOf("Trieste")).toBe("ITA");
   });
+  it("couvre le monde entier avec les frontières de 1936", () => {
+    const where = (name: string) => MAP_1936.provinces.find((p) => p.name === name)?.owner;
+    expect(MAP_1936.provinces.length).toBeGreaterThan(2000);
+    expect(where("Washington")).toBe("USA");
+    expect(where("Rio de Janeiro")).toBe("BRA");
+    expect(where("Keijō")).toBe("JAP");
+    expect(where("Taihoku")).toBe("JAP");
+    expect(where("Hsinking")).toBe("MAN");
+    expect(where("Moukden")).toBe("MAN");
+    expect(where("Lhassa")).toBe("TIB");
+    expect(where("Nankin")).toBe("CHI");
+    expect(where("Batavia")).toBe("NED");
+    expect(where("Bombay")).toBe("GBR");
+    expect(where("Hanoï")).toBe("FRA");
+    expect(where("Léopoldville")).toBe("BEL");
+    expect(where("Addis-Abeba")).toBe("ETH");
+    expect(where("Sydney")).toBe("AST");
+  });
+  it("commence avec la guerre d'Éthiopie", () => {
+    const s = createInitialState();
+    const ita = NATIONS_1936.findIndex((n) => n.id === "ITA"),
+      eth = NATIONS_1936.findIndex((n) => n.id === "ETH");
+    expect(s.wars).toContainEqual([Math.min(ita, eth), Math.max(ita, eth)]);
+  });
 });
 
 describe("simulation", () => {

@@ -19,6 +19,11 @@ interface Props {
 
 export function TopBar({ view, mode, onSpeed, onQuit }: Props) {
   const nation = NATIONS_1936.find((n) => n.id === view.myNation);
+  const me = NATIONS_1936.findIndex((n) => n.id === view.myNation);
+  const enemies = view.wars
+    .filter((w) => w[0] === me || w[1] === me)
+    .map((w) => NATIONS_1936[w[0] === me ? w[1] : w[0]]!);
+  const myUnits = view.units.filter((u) => u.nation === me).length;
   return (
     <header className="topbar">
       <div className="brand">War Board</div>
@@ -32,6 +37,22 @@ export function TopBar({ view, mode, onSpeed, onQuit }: Props) {
           "Observateur"
         )}
       </div>
+      {nation && (
+        <div className="army" title="Divisions terrestres">
+          {myUnits} division{myUnits > 1 ? "s" : ""}
+        </div>
+      )}
+      {enemies.length > 0 && (
+        <div className="wars" title="Nations en guerre contre vous">
+          En guerre :{" "}
+          {enemies.map((e) => (
+            <span key={e.id} className="enemy">
+              <span className="swatch" style={{ background: hex(e.color) }} />
+              {e.short ?? e.name}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="date" aria-live="polite">
         {formatDateFr(view.day)}
       </div>

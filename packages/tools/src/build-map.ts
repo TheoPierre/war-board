@@ -1,12 +1,13 @@
 /**
- * Prépare la carte des provinces de l'Europe en 1936 à partir de Natural Earth
+ * Prépare la carte des provinces du monde en 1936 à partir de Natural Earth
  * (domaine public).
  *
  *   pnpm map:build
  *
  * Étapes :
  *  1. Télécharge (une fois) les régions de niveau 1 et les villes de Natural Earth.
- *  2. Projette en conique conforme centrée sur l'Europe et découpe le cadre.
+ *  2. Projette en projection cylindrique de Miller (centrée sur 10° E) et
+ *     découpe le cadre, de 56° S à 78° N.
  *  3. Simplifie en gardant les frontières communes (topologie).
  *  4. Applique les frontières de 1936 (voir borders1936.ts).
  *  5. Découpe les régions trop grandes autour de leurs villes principales,
@@ -18,8 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as turf from "@turf/turf";
-import { geoConicConformal } from "d3-geo";
-import { geoProject } from "d3-geo-projection";
+import { geoProject, geoMiller } from "d3-geo-projection";
 import { Delaunay } from "d3-delaunay";
 import { topology } from "topojson-server";
 import { feature, merge, neighbors } from "topojson-client";
@@ -39,21 +39,31 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
 const CACHE = join(HERE, "..", ".cache");
-const OUT_TOPO = join(ROOT, "packages/client/public/map/europe-1936.topo.json");
+const OUT_TOPO = join(ROOT, "packages/client/public/map/world-1936.topo.json");
 const OUT_SIM = join(ROOT, "packages/sim/src/scenario/provinces1936.json");
 
 const NE_BASE = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/";
 const NE_ADMIN1 = "ne_10m_admin_1_states_provinces.geojson";
 const NE_PLACES = "ne_10m_populated_places.geojson";
 
-/** Largeur de la carte en unités de monde (pixels au zoom 1). */
-const WIDTH = 4000;
-/** Cadre géographique : [ouest, sud, est, nord] en degrés. */
-const FRAME: [number, number, number, number] = [-24, 29.5, 50, 71.5];
-/** Surface visée d'une province, en km², en Europe et ailleurs. */
-const TARGET_KM2 = { europe: 15000, far: 70000 };
+/** Largeur de la carte en unités de monde (pixels au zoom 1) : 360° de longitude. */
+const WIDTH = 16000;
+/** Méridien central de la carte : la coupure tombe dans le Pacifique, à 170° O. */
+const CENTRAL_LON = 10;
+/** Latitudes extrêmes du cadre. */
+const SOUTH = -56,
+  NORTH = 78;
+/**
+ * Densité des provinces selon la région : fine en Europe, moyenne dans les
+ * régions peuplées ou disputées, large ailleurs.
+ */
+type Tier = "europe" | "mid" | "far";
+/** Surface visée d'une province, en km². */
+const TARGET_KM2: Record<Tier, number> = { europe: 15000, mid: 40000, far: 90000 };
 /** En dessous, on fusionne avec un voisin du même propriétaire. */
-const MIN_KM2 = { europe: 8000, far: 25000 };
+const MIN_KM2: Record<Tier, number> = { europe: 8000, mid: 15000, far: 30000 };
+/** Nombre maximal de morceaux pour une région découpée. */
+const MAX_SPLIT = 24;
 /** Seuil de simplification (aire de triangle, en pixels carrés). */
 const SIMPLIFY_WEIGHT = 0.35;
 /** Les îlots plus petits que ça (pixels carrés) sont retirés. */
@@ -95,18 +105,15 @@ async function loadNE(file: string): Promise<FeatureCollection> {
 // ---------------------------------------------------------------------------
 // 2. Projection
 
-const frameRing: [number, number][] = [];
+const projection = geoMiller()
+  .rotate([-CENTRAL_LON, 0])
+  .scale(WIDTH / (2 * Math.PI))
+  .translate([WIDTH / 2, 0]);
 {
-  const [w, s, e, n] = FRAME;
-  for (let x = w; x <= e; x += 1) frameRing.push([x, s]);
-  for (let y = s; y <= n; y += 1) frameRing.push([e, y]);
-  for (let x = e; x >= w; x -= 1) frameRing.push([x, n]);
-  for (let y = n; y >= s; y -= 1) frameRing.push([w, y]);
+  const top = projection([CENTRAL_LON, NORTH])![1];
+  projection.translate([WIDTH / 2, -top]);
 }
-const projection = geoConicConformal().parallels([40, 62]).rotate([-14, 0]);
-projection.fitWidth(WIDTH, { type: "MultiPoint", coordinates: frameRing });
-// fitWidth place le haut du cadre à y = 0 ; la hauteur est le bas du cadre projeté.
-const HEIGHT = Math.round(Math.max(...frameRing.map((p) => projection(p)![1])));
+const HEIGHT = Math.round(projection([CENTRAL_LON, SOUTH])![1]);
 projection.clipExtent([
   [0, 0],
   [WIDTH, HEIGHT],
@@ -178,8 +185,19 @@ function geomArea(g: Geom): number {
   return s;
 }
 
-function isFar(p: { lon: number; lat: number }): boolean {
-  return p.lat < 36.5 || p.lon > 41;
+function tier(p: { lon: number; lat: number }): Tier {
+  const { lon, lat } = p;
+  if (lon >= -25 && lon <= 41 && lat >= 36.5 && lat <= 72) return "europe";
+  const inBox = (w: number, s: number, e: number, n: number) => lon >= w && lon <= e && lat >= s && lat <= n;
+  if (
+    inBox(-18, 27, 62, 36.5) || // Afrique du Nord, Proche-Orient
+    inBox(41, 36.5, 62, 60) || // Caucase, Volga
+    inBox(98, 18, 146, 47) || // Chine de l'Est, Mandchourie, Corée, Japon
+    inBox(66, 5, 98, 35) || // Raj britannique
+    inBox(-105, 24, -60, 50) // Est de l'Amérique du Nord
+  )
+    return "mid";
+  return "far";
 }
 
 // ---------------------------------------------------------------------------
@@ -297,10 +315,13 @@ interface City {
 
 function cityName(p: Record<string, unknown>): string {
   const ne = String(p.NAME ?? "");
-  const hist = HISTORICAL_CITY_NAMES[ne] ?? HISTORICAL_CITY_NAMES[String(p.NAMEASCII ?? "")];
+  const hist =
+    HISTORICAL_CITY_NAMES[`${ne}|${p.ADM0_A3}`] ?? HISTORICAL_CITY_NAMES[ne] ?? HISTORICAL_CITY_NAMES[String(p.NAMEASCII ?? "")];
   if (hist) return hist;
   const fr = p.NAME_FR ? String(p.NAME_FR) : "";
-  return fr || ne;
+  // Quelques noms français de Natural Earth désignent une région, pas la ville.
+  if (!fr || /^(région|bannière)/i.test(fr)) return ne;
+  return cleanLabel(fr);
 }
 
 function pointInGeom(x: number, y: number, g: Geom): boolean {
@@ -419,7 +440,6 @@ async function main() {
   console.log(`Carte ${WIDTH} × ${HEIGHT}`);
 
   // --- Régions sources, propriétaire de base
-  const [fw, fs, fe, fn] = FRAME;
   const unknown = new Map<string, number>();
   const sources: Feature<Geom, Props>[] = [];
   for (const f of admin1.features) {
@@ -427,8 +447,9 @@ async function main() {
     const g = f.geometry as Geom;
     if (!g) continue;
     const bb = turf.bbox(f);
-    if (bb[2] < fw - 12 || bb[0] > fe + 20 || bb[3] < fs - 14 || bb[1] > fn + 6) continue;
+    if (bb[3] < SOUTH) continue;
     const adm0 = String(p.adm0_a3);
+    if (adm0 === "ATA") continue;
     const region = String(p.name ?? "");
     const statRegion = p.region ? String(p.region) : null;
     let owner = ADM0_OWNER[adm0];
@@ -497,7 +518,7 @@ async function main() {
   for (const f of placesFc.features) {
     const p = f.properties as Record<string, any>;
     const [lon, lat] = (f.geometry as any).coordinates as [number, number];
-    if (lon < fw - 5 || lon > fe + 5 || lat < fs - 3 || lat > fn + 3) continue;
+    if (lat < SOUTH || lat > NORTH) continue;
     const [x, y] = projectPoint(lon, lat);
     if (x < 0 || y < 0 || x > WIDTH || y > HEIGHT) continue;
     cities.push({ name: cityName(p), pop: Number(p.POP_MAX) || 0, x, y });
@@ -507,9 +528,9 @@ async function main() {
   // --- Découpe des grandes régions
   const split: F[] = [];
   for (const f of features) {
-    const target = isFar(f.properties) ? TARGET_KM2.far : TARGET_KM2.europe;
+    const target = TARGET_KM2[tier(f.properties)];
     const n = Math.round(f.properties.km2 / target);
-    if (n >= 2) split.push(...splitFeature(f, Math.min(n, 12), cities));
+    if (n >= 2) split.push(...splitFeature(f, Math.min(n, MAX_SPLIT), cities));
     else split.push(f);
   }
   features = split;
@@ -531,7 +552,7 @@ async function main() {
     let pickArea = Infinity;
     for (const i of alive) {
       const p = features[i]!.properties;
-      const min = isFar(p) ? MIN_KM2.far : MIN_KM2.europe;
+      const min = MIN_KM2[tier(p)];
       if (area[i]! >= min || area[i]! >= pickArea) continue;
       const ok = [...adj[i]!].some((j) => features[j]!.properties.owner === p.owner);
       if (!ok) continue;
@@ -664,10 +685,19 @@ async function main() {
     const idx = provs.findIndex((p) => p.owner === nation && pointInGeom(x, y, p.geom));
     if (idx >= 0) capitals[nation] = idx;
     else {
-      // la capitale peut tomber hors du cadre : on prend la plus grande province du pays
-      const own = provs.map((p, i) => [p, i] as const).filter(([p]) => p.owner === nation);
-      if (own.length) capitals[nation] = own.reduce((a, b) => (a[0].km2 >= b[0].km2 ? a : b))[1];
-      console.warn(`  ⚠ capitale hors carte pour ${nation}`);
+      // Ville côtière tombée hors du tracé simplifié : la province du pays la plus proche.
+      let best = -1,
+        bestD = Infinity;
+      provs.forEach((p, i) => {
+        if (p.owner !== nation) return;
+        const d = (centers[i]![0] - x) ** 2 + (centers[i]![1] - y) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      });
+      if (best >= 0) capitals[nation] = best;
+      if (best < 0 || bestD > 200 ** 2) console.warn(`  ⚠ capitale introuvable pour ${nation}`);
     }
   }
 
@@ -735,6 +765,7 @@ const LABEL_PREFIXES = [
   "région d'", "région du ", "comté de ", "comté d'", "district de ", "gouvernorat de ", "gouvernorat d'",
   "wilaya de ", "wilaya d'", "kraï de ", "kraï du ", "république de ", "république d'", "land de ", "canton de ",
   "république des ", "république du ", "canton d'", "département de ", "département d'", "préfecture de ", "municipalité de ", "fylke de ", "comté du ",
+  "ville-préfecture de ", "ville-préfecture d'", "préfecture d'", "bourg de ", "bourg d'",
 ];
 
 /** Retire les préfixes administratifs modernes (« voïvodie de », « oblast de »...). */
