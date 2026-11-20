@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "map:build": "tsx src/build-map.ts",
+    "images:build": "tsx src/build-images.ts",
+    "test": "vitest run",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
@@ -26,6 +28,7 @@
     "@types/topojson-server": "^3.0.4",
     "@types/topojson-simplify": "^3.0.3",
     "@types/topojson-specification": "^1.0.5",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "vitest": "^5.1.1"
   }
 }
