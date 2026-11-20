@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { NATIONS_1936 } from "@war-board/sim";
 import { hex } from "./TopBar.tsx";
+import { WikiImage } from "./WikiImage.tsx";
+import { Credits } from "./Credits.tsx";
+import { leaderOf, useImageLibrary } from "../media/images.ts";
 
 export interface LobbyChoice {
   mode: "solo" | "multi";
@@ -10,6 +13,10 @@ export interface LobbyChoice {
 
 export function Lobby({ onStart, error }: { onStart(choice: LobbyChoice): void; error?: string }) {
   const [nation, setNation] = useState("FRA");
+  const [showCredits, setShowCredits] = useState(false);
+  const lib = useImageLibrary();
+  const leader = leaderOf(lib, nation);
+  const nationName = NATIONS_1936.find((n) => n.id === nation)?.name ?? nation;
   const [name, setName] = useState(() => {
     try {
       return localStorage.getItem("warboard.name") ?? "";
@@ -51,6 +58,14 @@ export function Lobby({ onStart, error }: { onStart(choice: LobbyChoice): void; 
             <NationButton key={n.id} id={n.id} name={n.name} color={n.color} active={nation === n.id} onClick={setNation} />
           ))}
         </div>
+        <div className="nation-card">
+          <WikiImage id={`flag:${nation}`} className="flag" alt={`Drapeau : ${nationName}`} />
+          {leader && <WikiImage id={leader.id} className="portrait" />}
+          <div className="who">
+            <b>{nationName}</b>
+            {leader && <span>Dirigeant en 1936 : {leader.label}</span>}
+          </div>
+        </div>
         <div className="actions">
           <button className="primary" onClick={() => start("solo")}>
             Jouer en solo
@@ -60,6 +75,13 @@ export function Lobby({ onStart, error }: { onStart(choice: LobbyChoice): void; 
         <p className="hint">
           Un jour de jeu dure 5 secondes. En multijoueur, le premier joueur arrivé règle la vitesse (8 joueurs au plus).
         </p>
+        <p className="hint">
+          Illustrations : Wikimedia Commons.{" "}
+          <button className="link-btn" onClick={() => setShowCredits(true)}>
+            Crédits des images
+          </button>
+        </p>
+        {showCredits && <Credits onClose={() => setShowCredits(false)} />}
       </div>
     </div>
   );

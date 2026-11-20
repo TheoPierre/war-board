@@ -13,7 +13,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "map:build": "pnpm --filter @war-board/tools map:build"
+    "map:build": "pnpm --filter @war-board/tools map:build",
+    "images:build": "pnpm --filter @war-board/tools images:build"
   },
   "devDependencies": {
     "concurrently": "^10.0.7",

@@ -25,6 +25,7 @@ Autres commandes :
 | `pnpm typecheck` | Vérification TypeScript de tous les paquets |
 | `pnpm build` | Build de production du client (`packages/client/dist`) |
 | `pnpm map:build` | Régénère la carte depuis Natural Earth |
+| `pnpm images:build` | Met à jour la bibliothèque d'illustrations depuis Wikidata et Wikimedia Commons |
 
 ## Organisation
 
@@ -68,6 +69,16 @@ Le résultat est versionné : `packages/client/public/map/europe-1936.topo.json`
 
 Limites connues : les découpes tracées à la main sont approximatives (à quelques kilomètres près), les micro-États sont rattachés à leur voisin, et les provinces découpées sans ville notable portent un nom de région suivi d'une direction (« Vologda nord »).
 
+## Les illustrations
+
+Drapeaux de 1936, dirigeants, généraux, amiraux, navires, armes, villes et événements viennent de [Wikimedia Commons](https://commons.wikimedia.org/), retrouvés par leur article Wikipédia en français.
+
+- Le catalogue est dans `packages/tools/src/images/catalog.ts` : une ligne par sujet. Pour en ajouter, il suffit d'ajouter une ligne et de lancer `pnpm images:build` (quelques minutes, l'outil va lentement pour respecter Wikimedia).
+- L'outil prend l'image de l'élément Wikidata (P18), ou pour un drapeau celui en usage en 1936 (P41), et garde seulement le domaine public, CC0, CC BY et CC BY-SA.
+- Il écrit `packages/client/public/images/manifest.json` (adresse de la vignette, auteur, licence, liens) et `packages/tools/images-report.md`, qui liste les sujets à corriger avec un `qid` ou un `file`.
+- Par défaut, le jeu affiche les vignettes servies par Wikimedia. `pnpm images:build --download` les copie dans le client, pour un serveur qui ne dépend pas de Wikimedia.
+- Côté client : `useImage("general:gamelin")`, le composant `<WikiImage id="…">`, et l'écran « Crédits des images » depuis le salon. Les images marquées sensibles (symboles nazis) sont légèrement floutées.
+
 ## Suite prévue
 
 - Persistance des parties avec PostgreSQL.
@@ -78,3 +89,5 @@ Limites connues : les découpes tracées à la main sont approximatives (à quel
 ## Licences des données
 
 Carte dérivée de Natural Earth, dans le domaine public. Les frontières de 1936 sont une reconstitution propre à War Board.
+
+Illustrations : Wikimedia Commons, chacune sous sa propre licence (domaine public, CC0, CC BY ou CC BY-SA). L'auteur et la licence de chaque image sont dans `manifest.json` et affichés dans l'écran de crédits ; les licences CC BY et CC BY-SA demandent de les citer.
