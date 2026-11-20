@@ -3,7 +3,7 @@ import { feature, mesh } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import type { MultiLineString, MultiPolygon, Polygon } from "geojson";
 import { NATIONS_1936, type Battle, type MapDef, type Unit } from "@war-board/sim";
-import { MAP_THEME as TH } from "./theme.ts";
+import { MAP_THEME as TH, mapColor } from "./theme.ts";
 import { UnitLayer } from "./UnitLayer.ts";
 
 const SELECT = TH.select;
@@ -11,7 +11,18 @@ const SELECT = TH.select;
 // Ne dessine que ce qui est à l'écran : indispensable avec la carte du monde.
 extensions.add(CullerPlugin);
 
-interface Shape {
+/** Calques de la carte : couleurs des nations, ou relations avec la nation jouée. */
+export type MapLayer = "political" | "diplomatic";
+
+/** Partie visible de la carte, en coordonnées de monde. */
+export interface MapViewport {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface Shape {
   /** Anneaux aplatis [x0, y0, x1, y1, ...] ; le premier de chaque polygone est l'extérieur. */
   polygons: number[][][];
   bbox: [number, number, number, number];
@@ -27,6 +38,48 @@ export interface MapCallbacks {
   onBoxSelect(ids: number[]): void;
   /** Clic droit sur une province : ordre de déplacement. */
   onOrder(province: number): void;
+  /** La caméra a bougé (déplacement, zoom ou redimensionnement). */
+  onView?(view: MapViewport): void;
+}
+
+/** Contours des provinces, indexés par identifiant de province. */
+export function topoShapes(topo: Topology): Shape[] {
+  const shapes: Shape[] = [];
+  const fc = feature(topo, topo.objects.provinces as GeometryCollection);
+  for (const f of fc.features) {
+    const id = Number(f.id);
+    const g = f.geometry as Polygon | MultiPolygon;
+    const polys = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+    let x0 = Infinity,
+      y0 = Infinity,
+      x1 = -Infinity,
+      y1 = -Infinity;
+    const polygons = polys.map((rings) =>
+      rings.map((ring) => {
+        const flat: number[] = [];
+        for (const [x, y] of ring as [number, number][]) {
+          flat.push(x, y);
+          if (x < x0) x0 = x;
+          if (y < y0) y0 = y;
+          if (x > x1) x1 = x;
+          if (y > y1) y1 = y;
+        }
+        return flat;
+      }),
+    );
+    shapes[id] = { polygons, bbox: [x0, y0, x1, y1] };
+  }
+  return shapes;
+}
+
+/** Couleur de chaque nation selon le calque. */
+export function layerColors(layer: MapLayer, myNation: number, hostile: ReadonlySet<number>): number[] {
+  return NATIONS_1936.map((n, i) => {
+    if (layer === "political") return mapColor(n.id, n.color);
+    if (i === myNation) return TH.diplomacy.me;
+    if (hostile.has(i)) return TH.diplomacy.enemy;
+    return TH.diplomacy.other;
+  });
 }
 
 /**
@@ -38,6 +91,10 @@ export class MapRenderer {
   // Groupe de rendu : la géométrie fixe reste sur la carte graphique, seul le déplacement change.
   private world = new Container({ isRenderGroup: true });
   private fills: Graphics[] = [];
+  private grid = new Graphics();
+  private coastGlow = new Graphics();
+  private coastLines: MultiLineString | null = null;
+  private layer: MapLayer = "political";
   private provinceBorders = new Graphics();
   private nationBorders = new Graphics();
   private highlight = new Graphics();
@@ -88,7 +145,9 @@ export class MapRenderer {
     this.host.appendChild(this.app.canvas);
     this.app.stage.addChild(this.world);
 
-    this.buildShapes();
+    this.shapes = topoShapes(this.topo);
+    this.drawGrid();
+    this.world.addChild(this.grid, this.coastGlow);
     for (const [i, s] of this.shapes.entries()) {
       const g = new Graphics();
       for (const poly of s.polygons) {
@@ -117,6 +176,30 @@ export class MapRenderer {
     this.ready = true;
     if (this.owners.length) this.applyOwners();
     this.applyUnits();
+    // Animations des pions (anneau de sélection, batailles).
+    this.app.ticker.add((t) => this.unitLayer.tick(t.deltaMS));
+  }
+
+  /** Change le calque de couleurs (politique ou diplomatique). */
+  setLayer(layer: MapLayer): void {
+    if (layer === this.layer) return;
+    this.layer = layer;
+    if (this.ready && this.owners.length) this.applyColors();
+  }
+
+  /** Centre la caméra sur un point de la carte (clic sur la mini-carte). */
+  centerOn(wx: number, wy: number): void {
+    if (!this.ready) return;
+    const s = this.world.scale.x;
+    this.world.position.set(this.app.screen.width / 2 - wx * s, this.app.screen.height / 2 - wy * s);
+    this.clampWorld();
+  }
+
+  /** Partie visible de la carte. */
+  viewport(): MapViewport {
+    const [x0, y0] = this.toWorld(0, 0);
+    const [x1, y1] = this.toWorld(this.app.screen.width, this.app.screen.height);
+    return { x0, y0, x1, y1 };
   }
 
   /** Divisions, batailles, nation jouée et divisions sélectionnées. */
@@ -127,8 +210,11 @@ export class MapRenderer {
     selected: ReadonlySet<number>,
     hostile: ReadonlySet<number>,
   ): void {
+    const hostileChanged = hostile !== this.unitData.hostile || myNation !== this.unitData.myNation;
     this.unitData = { units, battles, myNation, selected, hostile };
-    if (this.ready) this.applyUnits();
+    if (!this.ready) return;
+    this.applyUnits();
+    if (hostileChanged && this.layer === "diplomatic" && this.owners.length) this.applyColors();
   }
 
   private applyUnits() {
@@ -162,41 +248,27 @@ export class MapRenderer {
 
   // -------------------------------------------------------------------------
 
-  private buildShapes() {
-    const fc = feature(this.topo, this.topo.objects.provinces as GeometryCollection);
-    for (const f of fc.features) {
-      const id = Number(f.id);
-      const g = f.geometry as Polygon | MultiPolygon;
-      const polys = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
-      let x0 = Infinity,
-        y0 = Infinity,
-        x1 = -Infinity,
-        y1 = -Infinity;
-      const polygons = polys.map((rings) =>
-        rings.map((ring) => {
-          const flat: number[] = [];
-          for (const [x, y] of ring as [number, number][]) {
-            flat.push(x, y);
-            if (x < x0) x0 = x;
-            if (y < y0) y0 = y;
-            if (x > x1) x1 = x;
-            if (y > y1) y1 = y;
-          }
-          return flat;
-        }),
-      );
-      this.shapes[id] = { polygons, bbox: [x0, y0, x1, y1] };
-    }
-  }
-
   private applyOwners() {
-    const colors = NATIONS_1936.map((n) => n.color);
-    this.owners.forEach((o, i) => {
-      const g = this.fills[i];
-      if (g) g.tint = colors[o] ?? 0x888888;
-    });
+    this.applyColors();
     this.drawNationBorders();
     this.buildNationLabels();
+  }
+
+  private applyColors() {
+    const colors = layerColors(this.layer, this.unitData.myNation, this.unitData.hostile);
+    this.owners.forEach((o, i) => {
+      const g = this.fills[i];
+      if (g) g.tint = colors[o] ?? TH.diplomacy.other;
+    });
+  }
+
+  /** Quadrillage de la mer, dessiné une fois sous les terres. */
+  private drawGrid() {
+    const g = this.grid;
+    const step = TH.grid.step;
+    for (let x = step; x < this.map.width; x += step) g.moveTo(x, 0).lineTo(x, this.map.height);
+    for (let y = step; y < this.map.height; y += step) g.moveTo(0, y).lineTo(this.map.width, y);
+    g.stroke({ width: 1, color: TH.grid.color, alpha: TH.grid.alpha, pixelLine: true });
   }
 
   private drawNationBorders() {
@@ -212,9 +284,14 @@ export class MapRenderer {
     drawLines(this.nationBorders, lines);
     this.nationBorders.stroke({ width: TH.nationBorder.px / scale, color: TH.nationBorder.color, alpha: TH.nationBorder.alpha, join: "round", cap: "round" });
     // Liseré clair autour des côtes pour détacher les terres de la mer.
-    const coast = mesh(this.topo, this.topo.objects.provinces as GeometryCollection, (a, b) => a === b);
-    drawLines(this.nationBorders, coast);
+    this.coastLines ??= mesh(this.topo, this.topo.objects.provinces as GeometryCollection, (a, b) => a === b);
+    drawLines(this.nationBorders, this.coastLines);
     this.nationBorders.stroke({ width: TH.coast.px / scale, color: TH.coast.color, alpha: TH.coast.alpha });
+    // Halo clair côté mer : il est sous les terres, seule la moitié extérieure se voit.
+    this.coastGlow.clear();
+    drawLines(this.coastGlow, this.coastLines);
+    // Opaque et sans jointures arrondies : un halo arrondi et transparent coûtait cher au rendu.
+    this.coastGlow.stroke({ width: TH.coastGlow.px / scale, color: TH.coastGlow.color, alpha: TH.coastGlow.alpha, join: "bevel" });
   }
 
   /** Nom de chaque nation au centre de son territoire principal (autour de la capitale). */
@@ -245,16 +322,19 @@ export class MapRenderer {
         sy += provinces[p]!.center[1] * w;
         sw += w;
       }
-      const size = Math.max(11, Math.min(150, Math.sqrt(sw) / 28));
+      const text = (nation.short ?? nation.name).toUpperCase();
+      const size = Math.max(11, Math.min(150, Math.sqrt(sw) / 30));
+      // Noms courts très espacés, noms longs un peu moins (0,8 à 0,4 em).
+      const [minLs, maxLs] = TH.nationLabel.letterSpacing;
+      const ls = maxLs - (maxLs - minLs) * Math.min(1, Math.max(0, (text.length - 5) / 9));
       const t = new Text({
-        text: (nation.short ?? nation.name).toUpperCase(),
+        text,
         style: {
           fontFamily: TH.nationLabel.fontFamily,
           fontSize: size,
-          fontWeight: "bold",
-          letterSpacing: size * TH.nationLabel.letterSpacing,
+          fontWeight: TH.nationLabel.fontWeight,
+          letterSpacing: size * ls,
           fill: TH.nationLabel.fill,
-          stroke: { color: TH.nationLabel.stroke, width: Math.max(1.2, size * 0.12), join: "round" },
           align: "center",
         },
         resolution: 4,
@@ -466,6 +546,7 @@ export class MapRenderer {
     const p = this.world.position;
     p.x = w <= sw ? (sw - w) / 2 : Math.min(0, Math.max(sw - w, p.x));
     p.y = h <= sh ? (sh - h) / 2 : Math.min(0, Math.max(sh - h, p.y));
+    this.callbacks.onView?.(this.viewport());
   }
 
   /** Province sous un point de l'écran. */
