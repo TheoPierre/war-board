@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
-import { MAP_1936 } from "@war-board/sim";
+import { MAP_1936, type Battle, type Unit } from "@war-board/sim";
 import { MapRenderer } from "./MapRenderer.ts";
 
 interface Props {
@@ -9,6 +9,16 @@ interface Props {
   selected: number | null;
   onSelect(id: number | null): void;
   onHover(id: number | null): void;
+  units: readonly Unit[];
+  battles: readonly Battle[];
+  /** Index de la nation jouée, -1 pour un observateur. */
+  myNation: number;
+  selectedUnits: ReadonlySet<number>;
+  /** Nations en guerre avec la nation jouée. */
+  hostile: ReadonlySet<number>;
+  onUnitsClick(ids: number[], additive: boolean): void;
+  onBoxSelect(ids: number[]): void;
+  onOrder(province: number): void;
 }
 
 let topoPromise: Promise<Topology> | null = null;
@@ -20,13 +30,14 @@ function loadTopo(): Promise<Topology> {
   return topoPromise;
 }
 
-export function MapView({ owners, ownersVersion, selected, onSelect, onHover }: Props) {
+export function MapView(props: Props) {
+  const { owners, ownersVersion, selected, onSelect, onHover, units, battles, myNation, selectedUnits, hostile } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<MapRenderer | null>(null);
-  const callbacks = useRef({ onSelect, onHover });
-  callbacks.current = { onSelect, onHover };
-  const latest = useRef({ owners, ownersVersion, selected });
-  latest.current = { owners, ownersVersion, selected };
+  const callbacks = useRef(props);
+  callbacks.current = props;
+  const latest = useRef({ owners, ownersVersion, selected, units, battles, myNation, selectedUnits, hostile });
+  latest.current = { owners, ownersVersion, selected, units, battles, myNation, selectedUnits, hostile };
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -40,9 +51,14 @@ export function MapView({ owners, ownersVersion, selected, onSelect, onHover }: 
         renderer = new MapRenderer(host, topo, MAP_1936, {
           onSelect: (id) => callbacks.current.onSelect(id),
           onHover: (id) => callbacks.current.onHover(id),
+          onUnitsClick: (ids, additive) => callbacks.current.onUnitsClick(ids, additive),
+          onBoxSelect: (ids) => callbacks.current.onBoxSelect(ids),
+          onOrder: (p) => callbacks.current.onOrder(p),
         });
         rendererRef.current = renderer;
-        renderer.setOwners(latest.current.owners, latest.current.ownersVersion);
+        const l = latest.current;
+        renderer.setOwners(l.owners, l.ownersVersion);
+        renderer.setUnits(l.units, l.battles, l.myNation, l.selectedUnits, l.hostile);
         await renderer.init();
         renderer.setSelected(latest.current.selected);
         if (!cancelled) setLoading(false);
@@ -62,6 +78,10 @@ export function MapView({ owners, ownersVersion, selected, onSelect, onHover }: 
   useEffect(() => {
     rendererRef.current?.setSelected(selected);
   }, [selected]);
+
+  useEffect(() => {
+    rendererRef.current?.setUnits(units, battles, myNation, selectedUnits, hostile);
+  }, [units, battles, myNation, selectedUnits, hostile]);
 
   return (
     <div className="map-host" ref={hostRef}>

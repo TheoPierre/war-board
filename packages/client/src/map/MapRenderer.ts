@@ -2,12 +2,11 @@ import { Application, Container, Graphics, Text, type FederatedPointerEvent } fr
 import { feature, mesh } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import type { MultiLineString, MultiPolygon, Polygon } from "geojson";
-import { NATIONS_1936, type MapDef } from "@war-board/sim";
+import { NATIONS_1936, type Battle, type MapDef, type Unit } from "@war-board/sim";
+import { MAP_THEME as TH } from "./theme.ts";
+import { UnitLayer } from "./UnitLayer.ts";
 
-const SEA = 0x1b2a38;
-const PROVINCE_BORDER = 0x000000;
-const NATION_BORDER = 0x15130f;
-const SELECT = 0xffd75e;
+const SELECT = TH.select;
 
 interface Shape {
   /** Anneaux aplatis [x0, y0, x1, y1, ...] ; le premier de chaque polygone est l'extérieur. */
@@ -16,8 +15,15 @@ interface Shape {
 }
 
 export interface MapCallbacks {
+  /** Clic gauche sur une province (hors pion du joueur). */
   onSelect(province: number | null): void;
   onHover(province: number | null): void;
+  /** Clic sur un pion du joueur ; `additive` avec Maj. */
+  onUnitsClick(ids: number[], additive: boolean): void;
+  /** Sélection au rectangle (Maj + glisser). */
+  onBoxSelect(ids: number[]): void;
+  /** Clic droit sur une province : ordre de déplacement. */
+  onOrder(province: number): void;
 }
 
 /**
@@ -44,18 +50,29 @@ export class MapRenderer {
   private destroyed = false;
   private ready = false;
   private resizeObserver?: ResizeObserver;
+  private unitLayer: UnitLayer;
+  private boxGraphics = new Graphics();
+  private unitData: {
+    units: readonly Unit[];
+    battles: readonly Battle[];
+    myNation: number;
+    selected: ReadonlySet<number>;
+    hostile: ReadonlySet<number>;
+  } = { units: [], battles: [], myNation: -1, selected: new Set(), hostile: new Set() };
 
   constructor(
     private host: HTMLElement,
     private topo: Topology,
     private map: MapDef,
     private callbacks: MapCallbacks,
-  ) {}
+  ) {
+    this.unitLayer = new UnitLayer(map);
+  }
 
   async init(): Promise<void> {
     await this.app.init({
       resizeTo: this.host,
-      background: SEA,
+      background: TH.sea,
       antialias: true,
       autoDensity: true,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
@@ -82,16 +99,37 @@ export class MapRenderer {
     // Frontières entre provinces : fixes, une seule fois.
     const all = mesh(this.topo, this.topo.objects.provinces as GeometryCollection, (a, b) => a !== b);
     drawLines(this.provinceBorders, all);
-    this.provinceBorders.stroke({ width: 1, color: PROVINCE_BORDER, alpha: 0.22, pixelLine: true });
+    this.provinceBorders.stroke({ width: 1, color: TH.provinceBorder.color, alpha: TH.provinceBorder.alpha, pixelLine: true });
 
     this.world.addChild(this.provinceBorders, this.nationBorders, this.capitalsLayer, this.hoverOutline, this.highlight);
     this.world.addChild(this.nationLabels, this.provinceLabels);
+    this.world.addChild(this.unitLayer.paths, this.unitLayer.battles, this.unitLayer.counters);
+    this.app.stage.addChild(this.boxGraphics);
     this.buildProvinceLabels();
     this.drawCapitals();
     this.setupInteraction();
     this.fitToView();
     this.ready = true;
     if (this.owners.length) this.applyOwners();
+    this.applyUnits();
+  }
+
+  /** Divisions, batailles, nation jouée et divisions sélectionnées. */
+  setUnits(
+    units: readonly Unit[],
+    battles: readonly Battle[],
+    myNation: number,
+    selected: ReadonlySet<number>,
+    hostile: ReadonlySet<number>,
+  ): void {
+    this.unitData = { units, battles, myNation, selected, hostile };
+    if (this.ready) this.applyUnits();
+  }
+
+  private applyUnits() {
+    const d = this.unitData;
+    this.unitLayer.setData(d.units, d.battles, d.myNation, d.selected, d.hostile);
+    this.unitLayer.setScale(this.world.scale.x);
   }
 
   /** Met à jour les couleurs et les frontières de nations si les propriétaires ont changé. */
@@ -163,11 +201,11 @@ export class MapRenderer {
     );
     this.nationBorders.clear();
     drawLines(this.nationBorders, lines);
-    this.nationBorders.stroke({ width: 2.2 / scale, color: NATION_BORDER, alpha: 0.9, join: "round", cap: "round" });
+    this.nationBorders.stroke({ width: TH.nationBorder.px / scale, color: TH.nationBorder.color, alpha: TH.nationBorder.alpha, join: "round", cap: "round" });
     // Liseré clair autour des côtes pour détacher les terres de la mer.
     const coast = mesh(this.topo, this.topo.objects.provinces as GeometryCollection, (a, b) => a === b);
     drawLines(this.nationBorders, coast);
-    this.nationBorders.stroke({ width: 1.2 / scale, color: 0x0b141c, alpha: 0.8 });
+    this.nationBorders.stroke({ width: TH.coast.px / scale, color: TH.coast.color, alpha: TH.coast.alpha });
   }
 
   /** Nom de chaque nation au centre de son territoire principal (autour de la capitale). */
@@ -202,17 +240,17 @@ export class MapRenderer {
       const t = new Text({
         text: (nation.short ?? nation.name).toUpperCase(),
         style: {
-          fontFamily: "Georgia, 'Times New Roman', serif",
+          fontFamily: TH.nationLabel.fontFamily,
           fontSize: size,
           fontWeight: "bold",
-          letterSpacing: size * 0.12,
-          fill: 0xf6f0e0,
-          stroke: { color: 0x14110c, width: Math.max(1.2, size * 0.12), join: "round" },
+          letterSpacing: size * TH.nationLabel.letterSpacing,
+          fill: TH.nationLabel.fill,
+          stroke: { color: TH.nationLabel.stroke, width: Math.max(1.2, size * 0.12), join: "round" },
           align: "center",
         },
         resolution: 4,
       });
-      t.alpha = 0.85;
+      t.alpha = TH.nationLabel.alpha;
       t.anchor.set(0.5);
       t.position.set(sx / sw, sy / sw);
       this.nationLabels.addChild(t);
@@ -223,7 +261,7 @@ export class MapRenderer {
     for (const p of this.map.provinces) {
       const t = new Text({
         text: p.name,
-        style: { fontFamily: "Georgia, serif", fontSize: 4.2, fill: 0x111111 },
+        style: { fontFamily: TH.provinceLabel.fontFamily, fontSize: 4.2, fill: TH.provinceLabel.fill },
         resolution: 8,
       });
       t.anchor.set(0.5, -0.4);
@@ -238,11 +276,11 @@ export class MapRenderer {
     g.clear();
     for (const id of Object.values(this.map.capitals)) {
       const [x, y] = this.map.provinces[id]!.center;
-      g.star(x, y, 5, 4, 1.8).fill(0xf4e4b0).stroke({ width: 0.6, color: 0x222222 });
+      g.star(x, y, 5, 4, 1.8).fill(TH.capital.fill).stroke({ width: 0.6, color: TH.capital.stroke });
     }
     for (const p of this.map.provinces) {
       if (Object.values(this.map.capitals).includes(p.id)) continue;
-      g.circle(p.center[0], p.center[1], 0.9).fill({ color: 0x222222, alpha: 0.5 });
+      g.circle(p.center[0], p.center[1], 0.9).fill({ color: TH.town.color, alpha: TH.town.alpha });
     }
   }
 
@@ -263,18 +301,36 @@ export class MapRenderer {
     stage.eventMode = "static";
     stage.hitArea = this.app.screen;
     let dragging = false;
+    let boxing = false;
     let moved = 0;
     let lastX = 0,
-      lastY = 0;
+      lastY = 0,
+      startX = 0,
+      startY = 0;
+    this.app.canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
     stage.on("pointerdown", (e: FederatedPointerEvent) => {
-      dragging = true;
+      if (e.button === 2) {
+        const id = this.pick(e.global.x, e.global.y);
+        if (id !== null) this.callbacks.onOrder(id);
+        return;
+      }
+      if (e.button !== 0) return;
+      boxing = e.shiftKey;
+      dragging = !boxing;
       moved = 0;
-      lastX = e.global.x;
-      lastY = e.global.y;
+      lastX = startX = e.global.x;
+      lastY = startY = e.global.y;
     });
     stage.on("pointermove", (e: FederatedPointerEvent) => {
-      if (dragging) {
+      if (boxing) {
+        moved = Math.abs(e.global.x - startX) + Math.abs(e.global.y - startY);
+        const b = this.boxGraphics;
+        b.clear();
+        b.rect(Math.min(startX, e.global.x), Math.min(startY, e.global.y), Math.abs(e.global.x - startX), Math.abs(e.global.y - startY))
+          .fill({ color: TH.boxSelect.fill, alpha: TH.boxSelect.alpha })
+          .stroke({ width: 1, color: TH.boxSelect.stroke });
+      } else if (dragging) {
         const dx = e.global.x - lastX,
           dy = e.global.y - lastY;
         moved += Math.abs(dx) + Math.abs(dy);
@@ -287,16 +343,24 @@ export class MapRenderer {
       const id = this.pick(e.global.x, e.global.y);
       if (id !== this.hovered) {
         this.hovered = id;
-        this.drawOutline(this.hoverOutline, id, 0xffffff, 1.2);
+        this.drawOutline(this.hoverOutline, id, TH.hover, 1.2);
         this.callbacks.onHover(id);
       }
     });
     const end = (e: FederatedPointerEvent) => {
-      if (dragging && moved < 5) this.callbacks.onSelect(this.pick(e.global.x, e.global.y));
-      dragging = false;
+      if (boxing && moved >= 5) {
+        const [ax, ay] = this.toWorld(Math.min(startX, e.global.x), Math.min(startY, e.global.y));
+        const [bx, by] = this.toWorld(Math.max(startX, e.global.x), Math.max(startY, e.global.y));
+        this.callbacks.onBoxSelect(this.unitLayer.ownUnitsIn(ax, ay, bx, by));
+      } else if ((dragging || boxing) && moved < 5) this.click(e.global.x, e.global.y, e.shiftKey);
+      this.boxGraphics.clear();
+      dragging = boxing = false;
     };
     stage.on("pointerup", end);
-    stage.on("pointerupoutside", () => (dragging = false));
+    stage.on("pointerupoutside", () => {
+      this.boxGraphics.clear();
+      dragging = boxing = false;
+    });
     stage.on("pointerleave", () => {
       this.hovered = null;
       this.hoverOutline.clear();
@@ -314,6 +378,24 @@ export class MapRenderer {
     );
     this.resizeObserver = new ResizeObserver(() => this.clampWorld());
     this.resizeObserver.observe(this.host);
+  }
+
+  private toWorld(sx: number, sy: number): [number, number] {
+    const s = this.world.scale.x;
+    return [(sx - this.world.position.x) / s, (sy - this.world.position.y) / s];
+  }
+
+  private click(sx: number, sy: number, additive: boolean) {
+    const [wx, wy] = this.toWorld(sx, sy);
+    const stack = this.unitLayer.hit(wx, wy);
+    if (stack && stack.nation === this.unitData.myNation) {
+      this.callbacks.onUnitsClick(
+        stack.units.map((u) => u.id),
+        additive,
+      );
+      return;
+    }
+    this.callbacks.onSelect(this.pick(sx, sy));
   }
 
   zoomBy(factor: number) {
@@ -337,7 +419,8 @@ export class MapRenderer {
     this.nationLabels.visible = s < 3.2;
     if (Math.abs(s / this.borderScale - 1) > 0.15 && this.owners.length) this.drawNationBorders();
     this.drawOutline(this.highlight, this.selected, SELECT, 2.5);
-    this.drawOutline(this.hoverOutline, this.hovered, 0xffffff, 1.2);
+    this.drawOutline(this.hoverOutline, this.hovered, TH.hover, 1.2);
+    this.unitLayer.setScale(s);
   }
 
   private minScale() {

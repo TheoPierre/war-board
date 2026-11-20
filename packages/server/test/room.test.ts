@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@colyseus/sdk";
+import { MAP_1936, NATION_INDEX } from "@war-board/sim";
 import { createServer } from "../src/app.ts";
 
 const PORT = 25670;
@@ -31,6 +32,32 @@ describe("salle de jeu", () => {
     // l'hôte met en pause
     room.send("speed", 0);
     await waitFor(() => room.state.speed === 0);
+    await room.leave();
+  });
+
+  it("synchronise les divisions, la guerre et les déplacements", async () => {
+    const client = new Client(`ws://localhost:${PORT}`);
+    const room = await client.create<any>("partie", { speed: 20, nation: "GER" });
+    await waitFor(() => room.state.units?.size > 100);
+    const ger = NATION_INDEX.get("GER")!;
+    const mine: any[] = [];
+    room.state.units.forEach((u: any) => u.nation === ger && mine.push(u));
+    expect(mine.length).toBe(32);
+
+    const rejected: any[] = [];
+    room.onMessage("rejected", (m: any) => rejected.push(m));
+    // Vers la France sans guerre : refusé.
+    const unit = mine[0];
+    const fra = MAP_1936.capitals.FRA!;
+    room.send("command", { type: "unit.move", units: [unit.id], to: fra });
+    await waitFor(() => rejected.length > 0, 3000);
+    expect(rejected[0].reason).toMatch(/chemin/);
+
+    room.send("command", { type: "war.declare", target: "FRA" });
+    await waitFor(() => room.state.wars.length === 1, 3000);
+    room.send("command", { type: "unit.move", units: [unit.id], to: fra });
+    await waitFor(() => room.state.units.get(String(unit.id))?.path.length > 0, 3000);
+    expect(room.state.units.get(String(unit.id)).path.at(-1)).toBe(fra);
     await room.leave();
   });
 

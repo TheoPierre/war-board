@@ -1,4 +1,11 @@
-import type { Command, Speed } from "@war-board/sim";
+import type { Battle, Command, Speed, Unit } from "@war-board/sim";
+
+export interface SessionMessage {
+  id: number;
+  text: string;
+  /** Ordre refusé ou mauvaise nouvelle. */
+  bad: boolean;
+}
 
 export interface PlayerView {
   id: string;
@@ -14,6 +21,14 @@ export interface SessionView {
   owners: readonly number[];
   /** Incrémenté à chaque changement de propriétaire, pour redessiner les frontières. */
   ownersVersion: number;
+  /** Divisions de toutes les nations. */
+  units: readonly Unit[];
+  /** Guerres en cours : paires d'index de nations [a, b], a < b. */
+  wars: readonly (readonly [number, number])[];
+  /** Batailles du dernier jour. */
+  battles: readonly Battle[];
+  /** Messages récents (ordres refusés, batailles...), du plus ancien au plus récent. */
+  messages: readonly SessionMessage[];
   players: PlayerView[];
   /** Nation jouée sur ce poste (vide pour un observateur). */
   myNation: string;
