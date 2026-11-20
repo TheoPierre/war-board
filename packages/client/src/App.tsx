@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MAP_1936, NATIONS_1936, createInitialState, findPath, type GameState, type Unit } from "@war-board/sim";
 import { MapView } from "./map/MapView.tsx";
 import { TopBar } from "./ui/TopBar.tsx";
 import { ProvincePanel } from "./ui/ProvincePanel.tsx";
-import { UnitPanel } from "./ui/UnitPanel.tsx";
+import { UnitBar } from "./ui/UnitBar.tsx";
 import { Lobby, type LobbyChoice } from "./ui/Lobby.tsx";
 import { LocalSession } from "./session/LocalSession.ts";
 import { RemoteSession } from "./session/RemoteSession.ts";
 import type { GameSession, SessionMessage } from "./session/types.ts";
-import { MessageFeed } from "./ui/MessageFeed.tsx";
+import { Telegrams } from "./ui/Telegrams.tsx";
+import { IconSprite } from "./ui/hud/Icons.tsx";
+import { LeftColumn, type PanelId } from "./ui/hud/Panel.tsx";
+import { ArmyPanel, DiplomacyPanel, JournalPanel, ProductionPanel, SoonPanel, type JournalEntry } from "./ui/hud/Panels.tsx";
+import { PlayersBox, RightColumn } from "./ui/hud/RightColumn.tsx";
+import { Credits } from "./ui/Credits.tsx";
+
+/** Nombre de télégrammes gardés dans le journal. */
+const JOURNAL_SIZE = 200;
 
 /** Propriétaires de 1936, affichés en attendant le premier état du serveur. */
 const INITIAL_OWNERS = createInitialState().owners;
@@ -48,6 +56,8 @@ function Game({ session, onQuit }: { session: GameSession; onQuit(error?: string
   const [preview, setPreview] = useState<{ day: number; paths: Map<number, number[]> } | null>(null);
   const [localMessages, setLocalMessages] = useState<SessionMessage[]>([]);
   const say = useCallback((text: string) => setLocalMessages((l) => [...l.slice(-3), { id: -Date.now(), text, bad: true }]), []);
+  const [panel, setPanel] = useState<PanelId | null>(null);
+  const [encyclopedia, setEncyclopedia] = useState(false);
   const myNation = NATIONS_1936.findIndex((n) => n.id === view.myNation);
 
   useEffect(() => {
@@ -95,15 +105,58 @@ function Game({ session, onQuit }: { session: GameSession; onQuit(error?: string
     [selection, myNation, session, view.owners, view.wars, view.day, say],
   );
 
-  const messages = useMemo(() => [...view.messages, ...localMessages], [view.messages, localMessages]);
+  // Journal : chaque message est daté du jour de jeu et de l'heure d'arrivée (pour les télégrammes).
+  const journal = useRef(new Map<number, JournalEntry & { at: number }>());
+  const entries = useMemo(() => {
+    const j = journal.current;
+    for (const m of [...view.messages, ...localMessages])
+      if (!j.has(m.id)) j.set(m.id, { ...m, day: view.day, at: Date.now() });
+    while (j.size > JOURNAL_SIZE) j.delete(j.keys().next().value!);
+    return [...j.values()];
+    // view.day n'est lu que pour dater les nouveaux messages.
+  }, [view.messages, localMessages]);
+
+  // Raccourcis : D déplacer, S arrêter, Échap pour annuler.
+  const ownSelection = selection.filter((u) => u.nation === myNation);
+  const keys = useRef({ ownSelection, moveMode, stop: () => {} });
+  const stop = useCallback(() => {
+    session.send({ type: "unit.stop", units: selection.map((u) => u.id) });
+    const paths = new Map(selection.map((u) => [u.id, [] as number[]]));
+    setPreview({ day: view.day, paths });
+  }, [session, selection, view.day]);
+  keys.current = { ownSelection, moveMode, stop };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.ctrlKey || e.metaKey || e.altKey) return;
+      const k = keys.current;
+      if (e.key === "Escape") {
+        if (k.moveMode) setMoveMode(false);
+        else if (k.ownSelection.length) setSelectedUnits(NO_SELECTION);
+        else setPanel(null);
+      } else if (e.key.toLowerCase() === "d" && k.ownSelection.length) setMoveMode(!k.moveMode);
+      else if (e.key.toLowerCase() === "s" && k.ownSelection.some((u) => u.path.length)) k.stop();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const closePanel = () => {
+    if (panel === "province") setSelected(null);
+    setPanel(null);
+  };
+  const togglePanel = (id: PanelId) => {
+    if (panel === "province") setSelected(null);
+    setPanel(panel === id ? null : id);
+  };
 
   const hoveredName = hovered !== null ? MAP_1936.provinces[hovered]?.name : null;
   const hoveredOwner = hovered !== null ? NATIONS_1936[view.owners[hovered] ?? -1]?.name : null;
   const hoveredUnits = hovered !== null ? view.units.filter((u) => u.province === hovered).length : 0;
 
   return (
+    <>
     <div className="game">
-      <TopBar view={view} mode={session.mode} onSpeed={(s) => session.setSpeed(s)} onQuit={() => onQuit()} />
+      <IconSprite />
       <main className={moveMode ? "move-mode" : ""}>
         <MapView
           owners={view.owners.length ? view.owners : INITIAL_OWNERS}
@@ -113,6 +166,8 @@ function Game({ session, onQuit }: { session: GameSession; onQuit(error?: string
             if (moveMode && p !== null) return order(p);
             setSelected(p);
             setSelectedUnits(NO_SELECTION);
+            if (p !== null) setPanel("province");
+            else if (panel === "province") setPanel(null);
           }}
           onHover={setHovered}
           units={units}
@@ -133,14 +188,16 @@ function Game({ session, onQuit }: { session: GameSession; onQuit(error?: string
           onBoxSelect={(ids) => setSelectedUnits(new Set([...selectedUnits, ...ids]))}
           onOrder={order}
         />
+        <TopBar view={view} mode={session.mode} onSpeed={(s) => session.setSpeed(s)} onQuit={() => onQuit()} />
         {hoveredName && (
           <div className="hover-info">
-            {hoveredName}
+            <b>{hoveredName}</b>
             {hoveredOwner ? ` · ${hoveredOwner}` : ""}
             {hoveredUnits ? ` · ${hoveredUnits} division${hoveredUnits > 1 ? "s" : ""}` : ""}
           </div>
         )}
-        {selected !== null && (
+        <LeftColumn open={panel} badges={{ diplomatie: hostile.size }} onToggle={togglePanel} />
+        {panel === "province" && selected !== null && (
           <ProvincePanel
             province={selected}
             owners={view.owners}
@@ -148,22 +205,38 @@ function Game({ session, onQuit }: { session: GameSession; onQuit(error?: string
             debug={view.debug}
             units={view.units}
             wars={view.wars}
-            onClose={() => setSelected(null)}
+            onClose={closePanel}
             onTransfer={(province, to) => session.send({ type: "debug.transferProvince", province, to })}
             onDeclareWar={(target) => session.send({ type: "war.declare", target })}
           />
         )}
+        {panel === "journal" && <JournalPanel entries={entries} onClose={closePanel} />}
+        {panel === "diplomatie" && (
+          <DiplomacyPanel
+            myNation={myNation}
+            wars={view.wars}
+            onDeclareWar={(target) => session.send({ type: "war.declare", target })}
+            onClose={closePanel}
+          />
+        )}
+        {panel === "armee" && (
+          <ArmyPanel units={view.units} myNation={myNation} onSelect={(ids) => setSelectedUnits(new Set(ids))} onClose={closePanel} />
+        )}
+        {panel === "production" && <ProductionPanel myNation={myNation} onClose={closePanel} />}
+        {(panel === "economie" || panel === "renseignement" || panel === "recherche" || panel === "objectifs") && (
+          <SoonPanel id={panel} myNation={myNation} onClose={closePanel} />
+        )}
+        <Telegrams entries={entries} />
+        <RightColumn nation={view.myNation} onEncyclopedia={() => setEncyclopedia(true)} />
+        {session.mode === "multi" && <PlayersBox players={view.players} me={view.myNation} />}
         {selection.length > 0 && (
-          <UnitPanel
+          <UnitBar
             units={selection}
             battles={view.battles}
+            own={ownSelection.length > 0}
             moveMode={moveMode}
             onMoveMode={setMoveMode}
-            onStop={() => {
-              session.send({ type: "unit.stop", units: selection.map((u) => u.id) });
-              const paths = new Map(selection.map((u) => [u.id, [] as number[]]));
-              setPreview({ day: view.day, paths });
-            }}
+            onStop={stop}
             onSelectOnly={(id) => setSelectedUnits(new Set([id]))}
             onClose={() => {
               setSelectedUnits(NO_SELECTION);
@@ -171,8 +244,9 @@ function Game({ session, onQuit }: { session: GameSession; onQuit(error?: string
             }}
           />
         )}
-        <MessageFeed messages={messages} />
       </main>
     </div>
+    {encyclopedia && <Credits title="Encyclopédie illustrée" onClose={() => setEncyclopedia(false)} />}
+    </>
   );
 }

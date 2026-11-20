@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { KIND_LABELS, imageSrc, useImageLibrary, type ImageKind } from "../media/images.ts";
 
 /** Crédits des illustrations : auteur, licence et lien vers Commons pour chaque image. */
-export function Credits({ onClose }: { onClose(): void }) {
+export function Credits({ onClose, title = "Crédits des images" }: { onClose(): void; title?: string }) {
   const lib = useImageLibrary();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<ImageKind | "all">("all");
@@ -16,9 +16,9 @@ export function Credits({ onClose }: { onClose(): void }) {
 
   return (
     <div className="credits-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="credits" role="dialog" aria-label="Crédits des images">
+      <div className="credits" role="dialog" aria-label={title}>
         <header>
-          <h2>Crédits des images</h2>
+          <h2>{title}</h2>
           <button onClick={onClose} aria-label="Fermer">
             ✕
           </button>

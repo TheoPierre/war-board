@@ -63,12 +63,18 @@ Colyseus 0.18. Le serveur fait tourner la simulation et synchronise vers les cli
 ### Client (`packages/client`)
 
 - En solo, la simulation tourne dans le navigateur avec la même fonction `step` que le serveur.
-- La carte est dessinée avec PixiJS : couleur par propriétaire, frontières de nations recalculées à chaque changement, noms des pays, noms des provinces au zoom, capitales.
+- La carte est dessinée avec PixiJS, façon carte d'état-major sur papier : tons pastel par nation, frontières recalculées à chaque changement, grands noms de pays espacés (Oswald), noms des provinces au zoom, capitales.
+- Le HUD reprend la maquette validée (acier sombre et laiton) :
+  - barre du haut : drapeau et dirigeant de 1936, les 7 ressources (vides jusqu'à l'économie, étape 2), date, vitesses ;
+  - boutons ronds à gauche : Journal, Diplomatie, Économie, Armée, Renseignement, Recherche, Production, Objectifs. Les panneaux encore vides disent à quelle étape ils arrivent ;
+  - à droite, l'état-major de votre nation (portraits Wikimedia) et l'encyclopédie illustrée ;
+  - télégrammes en haut à droite, gardés dans le Journal ;
+  - en bas : barre de sélection des divisions, mini-carte cliquable, calques (politique, diplomatique), zoom.
 - Molette pour zoomer, glisser pour se déplacer, clic pour voir une province.
-- Divisions : clic sur un de vos pions pour le sélectionner (Maj + clic pour ajouter), Maj + glisser pour sélectionner au rectangle, **clic droit** sur une province pour y envoyer la sélection (ou bouton « Déplacer » puis clic). Le panneau de droite montre chaque division, sa santé et son trajet.
-- Le panneau d'une province étrangère propose « Déclarer la guerre ». Les batailles s'affichent avec ⚔ sur la frontière, les messages du jour en bas de l'écran.
+- Divisions : clic sur un de vos pions ronds pour le sélectionner (Maj + clic pour ajouter), Maj + glisser pour sélectionner au rectangle, **clic droit** sur une province pour y envoyer la sélection. Raccourcis : D pour « Déplacer » puis clic, S pour arrêter, Échap pour annuler.
+- Le panneau d'une province étrangère, comme le panneau Diplomatie, propose « Déclarer la guerre ». Les batailles s'affichent avec deux épées rouges qui pulsent sur la frontière.
 - En vue d'ensemble, seuls vos pions et ceux de vos ennemis restent affichés.
-- Couleurs, polices et tailles de la carte sont regroupées dans `packages/client/src/map/theme.ts`, en vue de la refonte graphique prévue (carte façon papier mat, tons pastel).
+- Couleurs et polices de la carte : `packages/client/src/map/theme.ts`. Couleurs et polices du HUD : `packages/client/src/hud.css`.
 
 ## La carte de 1936
 
