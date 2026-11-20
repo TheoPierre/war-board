@@ -33,7 +33,7 @@ export function Lobby({ onStart, error }: { onStart(choice: LobbyChoice): void; 
     <div className="lobby">
       <div className="lobby-card">
         <h1>War Board</h1>
-        <p className="subtitle">Europe, 1er janvier 1936 · prototype</p>
+        <p className="subtitle">Le monde au 1er janvier 1936 · prototype</p>
         {error && <p className="error">{error}</p>}
         <label className="field">
           Votre nom

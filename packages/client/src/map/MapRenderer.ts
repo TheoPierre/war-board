@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Text, type FederatedPointerEvent } from "pixi.js";
+import { Application, Container, CullerPlugin, Graphics, Text, extensions, type FederatedPointerEvent } from "pixi.js";
 import { feature, mesh } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import type { MultiLineString, MultiPolygon, Polygon } from "geojson";
@@ -7,6 +7,9 @@ import { MAP_THEME as TH } from "./theme.ts";
 import { UnitLayer } from "./UnitLayer.ts";
 
 const SELECT = TH.select;
+
+// Ne dessine que ce qui est à l'écran : indispensable avec la carte du monde.
+extensions.add(CullerPlugin);
 
 interface Shape {
   /** Anneaux aplatis [x0, y0, x1, y1, ...] ; le premier de chaque polygone est l'extérieur. */
@@ -32,7 +35,8 @@ export interface MapCallbacks {
  */
 export class MapRenderer {
   private app = new Application();
-  private world = new Container();
+  // Groupe de rendu : la géométrie fixe reste sur la carte graphique, seul le déplacement change.
+  private world = new Container({ isRenderGroup: true });
   private fills: Graphics[] = [];
   private provinceBorders = new Graphics();
   private nationBorders = new Graphics();
@@ -92,6 +96,7 @@ export class MapRenderer {
         for (const hole of poly.slice(1)) g.poly(hole, true).cut();
       }
       g.tint = 0x888888;
+      g.cullable = true;
       this.fills[i] = g;
       this.world.addChild(g);
     }
@@ -134,7 +139,11 @@ export class MapRenderer {
 
   /** Met à jour les couleurs et les frontières de nations si les propriétaires ont changé. */
   setOwners(owners: readonly number[], version: number): void {
-    if (version === this.ownersVersion && owners === this.owners) return;
+    // L'état est recopié chaque jour : seule la version dit si les frontières ont bougé.
+    if (version === this.ownersVersion) {
+      this.owners = owners;
+      return;
+    }
     this.owners = owners;
     this.ownersVersion = version;
     if (this.ready) this.applyOwners();
@@ -236,7 +245,7 @@ export class MapRenderer {
         sy += provinces[p]!.center[1] * w;
         sw += w;
       }
-      const size = Math.max(11, Math.min(44, Math.sqrt(sw) / 30));
+      const size = Math.max(11, Math.min(150, Math.sqrt(sw) / 28));
       const t = new Text({
         text: (nation.short ?? nation.name).toUpperCase(),
         style: {
@@ -253,6 +262,7 @@ export class MapRenderer {
       t.alpha = TH.nationLabel.alpha;
       t.anchor.set(0.5);
       t.position.set(sx / sw, sy / sw);
+      t.cullable = true;
       this.nationLabels.addChild(t);
     });
   }
@@ -266,6 +276,7 @@ export class MapRenderer {
       });
       t.anchor.set(0.5, -0.4);
       t.position.set(p.center[0], p.center[1]);
+      t.cullable = true;
       this.provinceLabels.addChild(t);
     }
     this.provinceLabels.visible = false;
@@ -427,15 +438,23 @@ export class MapRenderer {
     return Math.max(this.app.screen.width / this.map.width, this.app.screen.height / this.map.height);
   }
 
+  /** Recentre sur la capitale de la nation jouée (sur l'Europe pour un observateur). */
   fitToView() {
-    // Cadrage de départ sur l'Europe centrale.
-    const s = Math.max(this.minScale(), this.app.screen.width / (this.map.width * 0.55));
+    const nation = NATIONS_1936[this.unitData.myNation];
+    const capital = nation ? this.map.capitals[nation.id] : undefined;
+    const [cx, cy] = capital !== undefined ? this.map.provinces[capital]!.center : this.lonLatGuessEurope();
+    // Environ 2 500 unités de large : un grand pays et ses voisins.
+    const s = Math.max(this.minScale(), this.app.screen.width / 2500);
     this.world.scale.set(s);
-    const cx = this.map.width * 0.47,
-      cy = this.map.height * 0.42;
     this.world.position.set(this.app.screen.width / 2 - cx * s, this.app.screen.height / 2 - cy * s);
     this.clampWorld();
     this.onZoomChanged();
+  }
+
+  /** Centre de l'Europe : la capitale allemande, à défaut le milieu de la carte. */
+  private lonLatGuessEurope(): [number, number] {
+    const berlin = this.map.capitals.GER;
+    return berlin !== undefined ? this.map.provinces[berlin]!.center : [this.map.width / 2, this.map.height / 2];
   }
 
   private clampWorld() {

@@ -23,6 +23,7 @@ export class UnitLayer {
   readonly battles = new Container();
   readonly counters = new Container();
   private stacks: Stack[] = [];
+  private cache = new Map<string, { sig: string; view: Container }>();
   private units: readonly Unit[] = [];
   private battleData: readonly Battle[] = [];
   private myNation = -1;
@@ -127,8 +128,21 @@ export class UnitLayer {
     // Les pions du joueur au-dessus.
     this.stacks.sort((a, b) => Number(a.nation === this.myNation) - Number(b.nation === this.myNation) || a.y - b.y);
 
-    this.counters.removeChildren().forEach((c) => c.destroy({ children: true }));
-    for (const s of this.stacks) this.counters.addChild(this.drawCounter(s));
+    // Les pions inchangés sont réutilisés : redessiner du texte coûte cher.
+    const next = new Map<string, { sig: string; view: Container }>();
+    this.counters.removeChildren();
+    for (const s of this.stacks) {
+      const sig = this.signature(s);
+      let entry = this.cache.get(sig);
+      if (entry) this.cache.delete(sig);
+      else entry = { sig, view: this.drawCounter(s) };
+      entry.view.position.set(s.x, s.y);
+      next.set(sig, entry);
+      entry.view.cullable = true;
+      this.counters.addChild(entry.view);
+    }
+    for (const old of this.cache.values()) old.view.destroy({ children: true });
+    this.cache = next;
 
     this.battles.removeChildren().forEach((c) => c.destroy({ children: true }));
     for (const b of this.battleData) {
@@ -146,6 +160,16 @@ export class UnitLayer {
       }
     }
     this.setScale(this.scale);
+  }
+
+  /** Tout ce qui change l'apparence d'un pion, sauf sa position. */
+  private signature(s: Stack): string {
+    const selected = s.units.some((u) => this.selected.has(u.id));
+    const counts = new Map<number, number>();
+    for (const u of s.units) counts.set(u.type, (counts.get(u.type) ?? 0) + 1);
+    const main = [...counts].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]![0];
+    const hp = Math.round((s.units.reduce((a, u) => a + u.hp, 0) / s.units.length / MAX_HP) * 20);
+    return `${s.units[0]!.id}:${s.nation}:${s.units.length}:${main}:${hp}:${selected ? 1 : 0}`;
   }
 
   private drawCounter(s: Stack): Container {

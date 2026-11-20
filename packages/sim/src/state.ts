@@ -1,4 +1,4 @@
-import { NATIONS_1936, NATION_INDEX } from "./scenario/nations1936.ts";
+import { NATIONS_1936, NATION_INDEX, WARS_1936 } from "./scenario/nations1936.ts";
 import { MAP_1936, type MapDef } from "./map.ts";
 import { deployArmies } from "./scenario/army1936.ts";
 
@@ -86,7 +86,11 @@ export function createInitialState(seed = 1936, map: MapDef = MAP_1936): GameSta
     nations: NATIONS_1936.map((n) => ({ id: n.id, production: 0, defeated: false })),
     units,
     nextUnitId: units.length + 1,
-    wars: [],
+    wars: WARS_1936.map(([a, b]) => {
+      const i = NATION_INDEX.get(a)!,
+        j = NATION_INDEX.get(b)!;
+      return [Math.min(i, j), Math.max(i, j)] as [number, number];
+    }).sort((x, y) => x[0] - y[0] || x[1] - y[1]),
     battles: [],
   };
 }

@@ -23,7 +23,7 @@ interface Props {
 
 let topoPromise: Promise<Topology> | null = null;
 function loadTopo(): Promise<Topology> {
-  topoPromise ??= fetch(`${import.meta.env.BASE_URL}map/europe-1936.topo.json`).then((r) => {
+  topoPromise ??= fetch(`${import.meta.env.BASE_URL}map/world-1936.topo.json`).then((r) => {
     if (!r.ok) throw new Error(`carte introuvable (${r.status})`);
     return r.json() as Promise<Topology>;
   });

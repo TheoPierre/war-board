@@ -138,7 +138,7 @@ describe("guerre et combats", () => {
     const [ger, fra] = borderPair();
     const u = addUnit(s, GER, ger, "armor");
     s = step(s, [war("GER", "FRA")]).state;
-    expect(s.wars).toEqual([[Math.min(GER, FRA), Math.max(GER, FRA)]]);
+    expect(s.wars).toContainEqual([Math.min(GER, FRA), Math.max(GER, FRA)]);
     s = run(s, 10, [move("GER", [u.id], fra)]);
     expect(s.owners[fra]).toBe(GER);
   });
