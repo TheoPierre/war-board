@@ -1,0 +1,22 @@
+{
+  "name": "war-board",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Jeu de stratégie web sur la Seconde Guerre mondiale (prototype).",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"pnpm --filter @war-board/server dev\" \"pnpm --filter @war-board/client dev\"",
+    "dev:client": "pnpm --filter @war-board/client dev",
+    "dev:server": "pnpm --filter @war-board/server dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "map:build": "pnpm --filter @war-board/tools map:build"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7",
+    "typescript": "^7.0.2"
+  }
+}
